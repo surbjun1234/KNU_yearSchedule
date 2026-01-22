@@ -92,7 +92,7 @@ def send_discord(schedule_list, best_notice, current_date):
             "title": "❗ 오늘의 일정",
             "fields": [{"name": "🔗 관련 공지사항", "value": notice_value}],
             "color": color,
-            "footer": {"text": "KNU Scheduler Bot | GitHub Actions"}
+            "footer": {"text": "KNU Scheduler Bot"}
         }]
     }
     requests.post(DISCORD_WEBHOOK_URL, json=payload)
