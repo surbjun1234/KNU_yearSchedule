@@ -90,7 +90,7 @@ def send_discord(schedule_list, best_notice, current_date):
     payload = {
         "embeds": [{
             "title": "❗ 오늘의 일정",
-            "description": f"{description}",
+            "description": f"{description}\n\n",
             "fields": [{"name": "🔗 관련 공지사항", "value": notice_value}],
             "color": color,
             "footer": {"text": "KNU Scheduler Bot"}
