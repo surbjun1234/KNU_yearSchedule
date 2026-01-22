@@ -1,17 +1,17 @@
 import requests
 import re
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import difflib
 from bs4 import BeautifulSoup
 from urllib.parse import quote
 
 # --- [1. 전역 설정값] ---
 TARGET_YEAR = "2026"
-# 깃허브 액션 Secrets에 저장된 'WEBHOOK_DATE'를 사용합니다.
+# GitHub Actions Secrets의 'WEBHOOK_DATE' 환경변수 사용
 DISCORD_WEBHOOK_URL = os.environ.get("WEBHOOK_DATE") 
 
-# 실전 배포용 (None일 때 오늘 날짜 기준 작동)
+# 실전 배포용 (None일 때 한국 시간 기준 작동)
 TEST_DATE = None 
 
 HEADERS = {
@@ -22,15 +22,17 @@ HEADERS = {
 # --- [2. 로직 함수] ---
 
 def is_date_in_range(target_date_str, period_str):
-    """숫자 기반 정밀 비교로 날짜 오탐지를 방지합니다."""
+    """숫자 기반 정밀 비교로 날짜 오탐지를 방지하고 기간 내 포함 여부를 체크합니다."""
     try:
         t_month, t_day = map(int, target_date_str.split('.'))
         dates = re.findall(r'(\d{1,2})\.(\d{1,2})', period_str)
         if not dates: return False
         
         start_m, start_d = map(int, dates[0])
+        # 단일 날짜 체크 (예: 11.24.)
         if len(dates) == 1:
             return t_month == start_m and t_day == start_d
+        # 기간 체크 (예: 1.20.~1.22.)
         else:
             target_dt = datetime(int(TARGET_YEAR), t_month, t_day)
             start_dt = datetime(int(TARGET_YEAR), start_m, start_d)
@@ -41,7 +43,7 @@ def is_date_in_range(target_date_str, period_str):
         return False
 
 def find_best_notice(keyword):
-    """학사공지 상세 페이지 링크를 생성하고 유사도를 체크합니다."""
+    """학사공지 상세 페이지 링크를 생성하고 유사도 임계값(0.4)을 체크합니다."""
     search_keyword = re.sub(r'\(.*?\)', '', keyword).strip()
     search_keyword = re.sub(r'\d+\.\d+\.?\s*~?\s*\d*\.?\d*\.?', '', search_keyword).strip()
     
@@ -78,22 +80,30 @@ def find_best_notice(keyword):
         return None
 
 def send_discord(schedule_list, best_notice, current_date):
-    """디스코드 웹훅 메시지 전송"""
+    """모바일 알림창 가독성을 극대화한 전송 함수입니다."""
     if not DISCORD_WEBHOOK_URL:
-        print("WEBHOOK_DATE 환경변수가 없습니다.")
+        print("WEBHOOK_DATE 환경변수가 설정되지 않았습니다.")
         return
 
-    description = "".join([f"• **{item}**\n" for item in schedule_list])
-    notice_value = f"[{best_notice['title']}]({best_notice['link']})" if best_notice else "🔍 비슷한 학사공지를 찾지 못했습니다."
+    # 1. 휴대폰 알림바에 뜰 요약 텍스트 (content)
+    summary_items = ", ".join(schedule_list)
+    alert_payload_text = f"❗ **오늘의 일정: {summary_items}**"
+
+    # 2. 디스코드 앱 내 상세 카드 (embed)
+    # 각 일정 항목을 두껍게 강조
+    description_lines = "".join([f"• **{item}**\n" for item in schedule_list])
+    
+    notice_value = f"**[{best_notice['title']}]({best_notice['link']})**" if best_notice else "🔍 비슷한 학사공지를 찾지 못했습니다."
     color = 15158332 if best_notice else 8421504
 
     payload = {
+        "content": alert_payload_text, # 모바일 알림창에 노출됨
         "embeds": [{
-            "title": "❗ 오늘의 일정",
-            "description": f"{description}\n\n",
+            "title": "📅 상세 학사일정 안내",
+            "description": f"{description_lines}\n📅 **일자: {current_date}**",
             "fields": [{"name": "🔗 관련 공지사항", "value": notice_value}],
             "color": color,
-            "footer": {"text": "KNU Scheduler Bot"}
+            "footer": {"text": "KNU Scheduler Bot | GitHub Actions"}
         }]
     }
     requests.post(DISCORD_WEBHOOK_URL, json=payload)
@@ -101,14 +111,18 @@ def send_discord(schedule_list, best_notice, current_date):
 # --- [3. 메인 실행부] ---
 
 def main():
-    # 날짜 보정
-    raw_date = TEST_DATE if TEST_DATE else datetime.now().strftime("%m.%d")
+    # 한국 표준시(KST) 설정 (UTC+9)
+    kst = timezone(timedelta(hours=9))
+    now_kst = datetime.now(kst)
+
+    # 날짜 보정 (서버 위치와 상관없이 한국 시간 기준)
+    raw_date = TEST_DATE if TEST_DATE else now_kst.strftime("%m.%d")
     parts = raw_date.split('.')
     target_date = f"{int(parts[0]):02d}.{int(parts[1]):02d}"
 
-    print(f"🚀 {target_date} 일정 체크 중...")
+    print(f"🚀 {target_date} (KST 기준) 일정 체크 시작...")
     
-    # 학사일정 데이터 로드
+    # 학사일정 로드
     schedule_url = f"https://www.knu.ac.kr/wbbs/wbbs/user/yearSchedule/index.action?menu_idx=43&vo.search_year={TARGET_YEAR}"
     resp = requests.get(schedule_url, headers=HEADERS)
     matches = re.findall(r'(\d{2}\.\d{2}\(.\))(.*?)</li>', resp.text, re.DOTALL)
@@ -117,19 +131,27 @@ def main():
     for date_label, raw_content in matches:
         content = re.sub(r'<.*?>', '', raw_content).replace('</span>', '').strip()
         content = re.sub(r'\s+', ' ', content)
+        
+        # 일정 괄호 안의 기간 정보 추출
         period_match = re.search(r'\((\d{1,2}\.\d{1,2}\.?.*?)\)$', content)
         
-        if (period_match and is_date_in_range(target_date, period_match.group(1))) or (target_date in date_label):
+        is_matched = False
+        if period_match and is_date_in_range(target_date, period_match.group(1)):
+            is_matched = True
+        elif target_date in date_label:
+            is_matched = True
+            
+        if is_matched:
             today_items.append(content)
 
-    # 핵심 수정: 일정이 있을 때만 전송 로직 실행
+    # 일정이 있을 때만 전송
     if today_items:
-        print(f"🎯 {len(today_items)}개의 일정이 발견되었습니다. 전송을 시작합니다.")
+        print(f"🎯 {len(today_items)}개의 일정이 발견되었습니다.")
+        # 대표 키워드로 공지 검색
         best_notice = find_best_notice(today_items[0])
         send_discord(today_items, best_notice, target_date)
     else:
-        # 일정이 없으면 아무 작업도 하지 않고 로그만 남기고 종료
-        print(f"ℹ️ {target_date}에는 해당하는 학사일정이 없습니다. 알림을 보내지 않습니다.")
+        print(f"ℹ️ {target_date}에는 해당하는 학사일정이 없어 알림을 보내지 않습니다.")
 
 if __name__ == "__main__":
     main()
