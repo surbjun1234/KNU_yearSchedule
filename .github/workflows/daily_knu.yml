@@ -1,0 +1,27 @@
+name: KNU Daily Notifier
+
+on:
+  schedule:
+    - cron: '30 23 * * *' # UTC 기준 (한국 시간 오전 8시 30분 실행)
+  workflow_dispatch: # 수동 실행 버튼
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4
+
+      - name: Run script
+        env:
+          WEBHOOK_DATE: ${{ secrets.WEBHOOK_DATE }}
+        run: python main.py
