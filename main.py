@@ -102,7 +102,7 @@ def send_discord(schedule_list, best_notice, current_date):
     color = 15158332 if best_notice else 8421504 # Crimson or Grey
 
     payload = {
-        "content": alert_payload_text,
+        "content": alert_text, # 수정된 부분 (alert_payload_text -> alert_text)
         "embeds": [{
             "description": f"{description_content}",
             "color": color,
